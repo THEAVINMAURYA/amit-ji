@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AppData, AccountType, TransactionType } from './types';
@@ -36,16 +37,16 @@ const INITIAL_DATA: AppData = {
 // --- E2EE CRYPTO & SYNC UTILS ---
 const cryptoUtils = {
   async hash(str: string) {
-    const msgUint8 = new TextEncoder().encode(str + "wt_pro_v3_salt");
+    const msgUint8 = new TextEncoder().encode(str + "wealthtrack_v4_salt");
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 20);
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 24);
   },
   async deriveKey(password: string) {
     const enc = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
     return crypto.subtle.deriveKey(
-      { name: "PBKDF2", salt: enc.encode("wt_pro_v3_salt"), iterations: 100000, hash: "SHA-256" },
+      { name: "PBKDF2", salt: enc.encode("wealthtrack_v4_salt"), iterations: 100000, hash: "SHA-256" },
       keyMaterial,
       { name: "AES-GCM", length: 256 },
       false,
@@ -61,7 +62,7 @@ const cryptoUtils = {
     combined.set(new Uint8Array(encrypted), iv.length);
     let binary = '';
     const bytes = new Uint8Array(combined);
-    for (let i = 0; i < bytes.byteLength; i++) {
+    for (let i = 0; i < bytes.length; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
@@ -79,7 +80,7 @@ const cryptoUtils = {
       const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
       return new TextDecoder().decode(decrypted);
     } catch (e) {
-      throw new Error("Decryption failed");
+      throw new Error("Decryption failed. Check credentials.");
     }
   }
 };
@@ -92,9 +93,10 @@ const App: React.FC = () => {
   const [toast, setToast] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
 
   useEffect(() => {
-    const saved = localStorage.getItem('wt_pro_elite_v12');
+    const saved = localStorage.getItem('wt_pro_elite_v15');
     if (saved) {
       try { setData(JSON.parse(saved)); } catch (e) { console.error(e); }
     }
@@ -110,8 +112,7 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       const encrypted = await cryptoUtils.encrypt(JSON.stringify(newData), newData.auth.password);
-      // We use a deterministic npoint-like key or similar storage service
-      // For this demo context, we simulate a robust cloud push to the derived syncId
+      // We use the derived syncId as a deterministic path for the public backend storage
       await fetch(`https://api.npoint.io/${newData.sync.syncId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -137,7 +138,7 @@ const App: React.FC = () => {
       cloudData.sync.lastSynced = remote.updatedAt;
       
       setData(cloudData);
-      localStorage.setItem('wt_pro_elite_v12', JSON.stringify(cloudData));
+      localStorage.setItem('wt_pro_elite_v15', JSON.stringify(cloudData));
       return true;
     } catch (err) {
       return false;
@@ -148,31 +149,33 @@ const App: React.FC = () => {
 
   const persist = useCallback((newData: AppData) => {
     setData(newData);
-    localStorage.setItem('wt_pro_elite_v12', JSON.stringify(newData));
+    localStorage.setItem('wt_pro_elite_v15', JSON.stringify(newData));
     if (newData.sync.autoSync && isLoggedIn) {
       pushToCloud(newData);
     }
   }, [isLoggedIn]);
 
-  const handleLogin = async (uid: string, pass: string) => {
+  const handleAuthorize = async (uid: string, pass: string) => {
     const derivedId = await cryptoUtils.hash(uid + pass);
     
-    // Step 1: Attempt to pull existing data from cloud
-    const pulled = await pullFromCloud(derivedId, pass);
-    
-    if (pulled) {
-      setIsLoggedIn(true);
-      showToast('Cloud Data Restored Successfully');
+    if (authMode === 'signin') {
+      const pulled = await pullFromCloud(derivedId, pass);
+      if (pulled) {
+        setIsLoggedIn(true);
+        showToast('Session Restored Everywhere');
+      } else {
+        showToast('Account not found in cloud. Try Sign Up?');
+      }
     } else {
-      // Step 2: If no cloud data found, initialize session with local/new data
+      // Sign Up: Create new cloud bin and initialize
       const newData = { 
-        ...data, 
+        ...INITIAL_DATA, 
         auth: { userId: uid, password: pass }, 
-        sync: { ...data.sync, syncId: derivedId, lastSynced: new Date().toISOString() } 
+        sync: { ...INITIAL_DATA.sync, syncId: derivedId, lastSynced: new Date().toISOString() } 
       };
       setData(newData);
       setIsLoggedIn(true);
-      showToast('New Sync Profile Initialized');
+      showToast('New Global Account Created');
       pushToCloud(newData);
     }
   };
@@ -197,32 +200,41 @@ const App: React.FC = () => {
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-slate-900 relative overflow-hidden">
-        <div className="absolute top-0 -left-10 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-[120px] opacity-20 animate-pulse"></div>
+        <div className="absolute top-0 -left-10 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-[120px] opacity-20"></div>
+        <div className="absolute bottom-0 -right-10 w-96 h-96 bg-emerald-600 rounded-full mix-blend-multiply filter blur-[120px] opacity-10"></div>
+        
         <div className="w-full max-w-md bg-white rounded-[3rem] shadow-2xl p-12 relative z-10">
-          <div className="flex flex-col items-center mb-12 text-center">
-            <div className="w-20 h-20 bg-indigo-600 text-white rounded-3xl flex items-center justify-center text-3xl mb-6 shadow-xl shadow-indigo-200">
-              <i className="fas fa-cloud-bolt"></i>
+          <div className="flex flex-col items-center mb-10 text-center">
+            <div className="w-20 h-20 bg-indigo-600 text-white rounded-3xl flex items-center justify-center text-3xl mb-6 shadow-xl shadow-indigo-100">
+              <i className="fas fa-globe-americas"></i>
             </div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tighter">WealthTrack Pro</h1>
-            <p className="text-slate-500 mt-2 font-medium">Auto-Sync Login Portal</p>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tighter">WealthTrack Public</h1>
+            <p className="text-slate-500 mt-2 font-medium text-sm">Secure Global Financial Dashboard</p>
           </div>
-          <form onSubmit={(e:any) => { e.preventDefault(); handleLogin(e.target.uid.value, e.target.pass.value); }} className="space-y-6">
+
+          <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-8">
+            <button onClick={() => setAuthMode('signin')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${authMode === 'signin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Sign In</button>
+            <button onClick={() => setAuthMode('signup')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${authMode === 'signup' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Sign Up</button>
+          </div>
+
+          <form onSubmit={(e:any) => { e.preventDefault(); handleAuthorize(e.target.uid.value, e.target.pass.value); }} className="space-y-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Universal User ID</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Username</label>
               <input name="uid" type="text" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500 transition-all" placeholder="Enter ID" required />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Encrypted Passphrase</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Secure Passphrase</label>
               <input name="pass" type="password" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500 transition-all" placeholder="••••••••" required />
             </div>
             <button type="submit" disabled={isSyncing} className="w-full py-5 bg-indigo-600 text-white font-black rounded-2xl shadow-lg hover:bg-indigo-700 transition-all uppercase tracking-widest text-xs flex items-center justify-center gap-3">
-              {isSyncing ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-shield-check"></i>}
-              Authorize & Sync
+              {isSyncing ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-cloud-arrow-up"></i>}
+              {authMode === 'signin' ? 'Enter Cloud Vault' : 'Create Public Account'}
             </button>
           </form>
-          <div className="mt-8 text-center">
+
+          <div className="mt-10 pt-8 border-t border-slate-50 text-center">
              <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest leading-relaxed">
-               Secure Cloud Vault enabled.<br/>Data follows you everywhere.
+               End-to-End Encrypted.<br/>Your data follows your ID everywhere.
              </p>
           </div>
         </div>
@@ -241,7 +253,7 @@ const App: React.FC = () => {
             </div>
             <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-[8px] font-black uppercase ${isSyncing ? 'bg-amber-100 text-amber-600 animate-pulse' : 'bg-emerald-100 text-emerald-600'}`}>
               <div className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-amber-400' : 'bg-emerald-400'}`}></div>
-              {isSyncing ? 'Syncing' : 'Live'}
+              {isSyncing ? 'Syncing' : 'Connected'}
             </div>
           </div>
           <nav className="flex-1 px-4 space-y-1 overflow-y-auto scrollbar-hide">
@@ -268,8 +280,8 @@ const App: React.FC = () => {
             ))}
           </nav>
           <div className="p-6 border-t border-slate-50 space-y-2">
-             <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-4 px-6 py-3 text-slate-400 hover:text-indigo-600 text-xs font-bold uppercase tracking-widest transition-colors"><i className="fas fa-cloud"></i> Sync Profile</button>
-             <button onClick={() => window.location.reload()} className="w-full flex items-center gap-4 px-6 py-3 text-rose-400 hover:text-rose-600 text-xs font-bold uppercase tracking-widest transition-colors"><i className="fas fa-sign-out"></i> Logout</button>
+             <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-4 px-6 py-3 text-slate-400 hover:text-indigo-600 text-xs font-bold uppercase tracking-widest transition-colors"><i className="fas fa-cloud"></i> Sync Status</button>
+             <button onClick={() => window.location.reload()} className="w-full flex items-center gap-4 px-6 py-3 text-rose-400 hover:text-rose-600 text-xs font-bold uppercase tracking-widest transition-colors"><i className="fas fa-power-off"></i> Logout</button>
           </div>
         </div>
       </aside>
@@ -278,23 +290,25 @@ const App: React.FC = () => {
         {renderPage()}
       </main>
 
-      <Modal title="Omnisync Configuration" isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)}>
+      <Modal title="Global Cloud Synchronization" isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)}>
         <div className="space-y-8">
-          <div className="p-8 bg-indigo-600 rounded-[2.5rem] shadow-xl shadow-indigo-100 text-white relative overflow-hidden">
-             <div className="absolute top-0 right-0 p-8 opacity-10">
-                <i className="fas fa-cloud text-9xl"></i>
+          <div className="p-8 bg-gradient-to-br from-indigo-600 to-indigo-700 rounded-[2.5rem] shadow-xl shadow-indigo-100 text-white relative overflow-hidden">
+             <div className="absolute -top-10 -right-10 opacity-10">
+                <i className="fas fa-cloud text-[12rem]"></i>
              </div>
              <div className="relative z-10">
-                <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-2">Cloud Identity Mapping</p>
+                <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-2">Public Cloud Identity</p>
                 <h3 className="text-3xl font-black mb-6 uppercase tracking-tight">{data.auth.userId}</h3>
-                <div className="flex items-center gap-4">
-                   <div className="flex-1 bg-white/10 p-4 rounded-2xl backdrop-blur-md">
-                      <p className="text-[8px] font-black uppercase opacity-60 mb-1">Status</p>
-                      <p className="text-xs font-black uppercase tracking-widest">Active & Synced</p>
+                <div className="grid grid-cols-2 gap-4">
+                   <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md">
+                      <p className="text-[8px] font-black uppercase opacity-60 mb-1">Vault Status</p>
+                      <p className="text-xs font-black uppercase tracking-widest flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></div> Fully Encrypted
+                      </p>
                    </div>
-                   <div className="flex-1 bg-white/10 p-4 rounded-2xl backdrop-blur-md">
+                   <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md">
                       <p className="text-[8px] font-black uppercase opacity-60 mb-1">Last Handshake</p>
-                      <p className="text-xs font-black uppercase tracking-widest">{data.sync.lastSynced ? new Date(data.sync.lastSynced).toLocaleTimeString() : 'Recent'}</p>
+                      <p className="text-xs font-black uppercase tracking-widest">{data.sync.lastSynced ? new Date(data.sync.lastSynced).toLocaleTimeString() : 'Fresh Session'}</p>
                    </div>
                 </div>
              </div>
@@ -303,20 +317,23 @@ const App: React.FC = () => {
           <div className="space-y-6">
              <div className="flex items-center justify-between px-2">
                 <div>
-                   <h4 className="font-black text-slate-800 uppercase text-xs tracking-widest">Real-time Auto-Sync</h4>
-                   <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Changes are instantly pushed to cloud</p>
+                   <h4 className="font-black text-slate-800 uppercase text-xs tracking-widest">Automated Synchronization</h4>
+                   <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Updates are instantly broadcasted to cloud</p>
                 </div>
                 <div className={`w-12 h-6 rounded-full cursor-pointer relative transition-all ${data.sync.autoSync ? 'bg-indigo-600' : 'bg-slate-200'}`} onClick={() => persist({...data, sync: {...data.sync, autoSync: !data.sync.autoSync}})}>
                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${data.sync.autoSync ? 'left-7' : 'left-1'}`}></div>
                 </div>
              </div>
              
-             <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-relaxed">
-                   Syncing is deterministic based on your User ID and Passphrase. Login with the same credentials on any device to pull your entire database instantly.
+             <div className="p-8 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4 text-center">
+                <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 text-indigo-600 shadow-sm">
+                   <i className="fas fa-mobile-screen-button text-2xl"></i>
+                </div>
+                <p className="text-[11px] font-black text-slate-500 uppercase tracking-widest leading-relaxed">
+                   Sync is deterministic.<br/>Sign in on any phone or PC with your credentials to see your details.
                 </p>
                 <button onClick={() => pushToCloud(data)} disabled={isSyncing} className="w-full py-4 bg-white border border-slate-200 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all shadow-sm">
-                   {isSyncing ? 'Syncing...' : 'Force Manual Sync Now'}
+                   {isSyncing ? 'Syncing...' : 'Force Global Refresh'}
                 </button>
              </div>
           </div>
@@ -324,8 +341,8 @@ const App: React.FC = () => {
       </Modal>
 
       {toast && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-4 rounded-2xl shadow-2xl z-[100] animate-in flex items-center gap-3 border border-white/10 backdrop-blur-md">
-          <i className="fas fa-circle-info text-indigo-400"></i>
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-4 rounded-2xl shadow-2xl z-[100] animate-in flex items-center gap-3 border border-white/10">
+          <i className="fas fa-circle-check text-emerald-400"></i>
           <span className="text-[10px] font-black uppercase tracking-widest">{toast}</span>
         </div>
       )}
