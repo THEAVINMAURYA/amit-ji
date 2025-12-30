@@ -36,7 +36,7 @@ const INITIAL_DATA: AppData = {
 // --- E2EE CRYPTO UTILS ---
 const cryptoUtils = {
   async hash(str: string) {
-    const msgUint8 = new TextEncoder().encode(str + "wealthtrack_v7_salt");
+    const msgUint8 = new TextEncoder().encode(str + "avin_maurya_v1_salt");
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 24);
@@ -45,7 +45,7 @@ const cryptoUtils = {
     const enc = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
     return crypto.subtle.deriveKey(
-      { name: "PBKDF2", salt: enc.encode("wealthtrack_v7_salt"), iterations: 100000, hash: "SHA-256" },
+      { name: "PBKDF2", salt: enc.encode("avin_maurya_v1_salt"), iterations: 100000, hash: "SHA-256" },
       keyMaterial,
       { name: "AES-GCM", length: 256 },
       false,
@@ -79,7 +79,7 @@ const cryptoUtils = {
       const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
       return new TextDecoder().decode(decrypted);
     } catch (e) {
-      throw new Error("Decryption failed. Identity could not be verified.");
+      throw new Error("Decryption failed. Data corrupted or incorrect passphrase.");
     }
   }
 };
@@ -96,13 +96,12 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('wt_pro_elite_v21');
+    const saved = localStorage.getItem('avin_maurya_v1_data');
     if (saved) {
       try { 
         const parsed = JSON.parse(saved);
         if (parsed.auth?.userId) {
           setData(parsed);
-          // If we have a saved ID, we still want them to log in for security on public builds
         }
       } catch (e) { console.error(e); }
     }
@@ -118,7 +117,6 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       const encrypted = await cryptoUtils.encrypt(JSON.stringify(newData), newData.auth.password);
-      // npoint provides a simple JSON storage. We use the deterministic syncId as the bin ID.
       await fetch(`https://api.npoint.io/${newData.sync.syncId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -144,10 +142,10 @@ const App: React.FC = () => {
       cloudData.sync.lastSynced = remote.updatedAt;
       
       setData(cloudData);
-      localStorage.setItem('wt_pro_elite_v21', JSON.stringify(cloudData));
+      localStorage.setItem('avin_maurya_v1_data', JSON.stringify(cloudData));
       return true;
     } catch (err) {
-      console.error("Pull failed", err);
+      console.error("Cloud pull failed", err);
       return false;
     } finally {
       setIsSyncing(false);
@@ -156,21 +154,27 @@ const App: React.FC = () => {
 
   const persist = useCallback((newData: AppData) => {
     setData(newData);
-    localStorage.setItem('wt_pro_elite_v21', JSON.stringify(newData));
+    localStorage.setItem('avin_maurya_v1_data', JSON.stringify(newData));
     if (newData.sync.autoSync && isLoggedIn) {
       pushToCloud(newData);
     }
   }, [isLoggedIn]);
 
   const handleExportVault = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const exportPackage = {
+      version: "1.0",
+      timestamp: new Date().toISOString(),
+      owner: data.auth.userId,
+      payload: data
+    };
+    const blob = new Blob([JSON.stringify(exportPackage, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `WealthTrack_Vault_${data.auth.userId}_${new Date().toISOString().split('T')[0]}.wtvault`;
+    link.download = `AVIN_DATA_${data.auth.userId}_${new Date().toISOString().split('T')[0]}.avindata`;
     link.click();
     URL.revokeObjectURL(url);
-    showToast('Master Vault Exported Successfully');
+    showToast('Unique Data File Exported Successfully');
   };
 
   const handleImportVault = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -180,13 +184,14 @@ const App: React.FC = () => {
     reader.onload = (event) => {
       try {
         const imported = JSON.parse(event.target?.result as string);
-        if (!imported.transactions || !imported.accounts || !imported.auth) {
-          throw new Error("Invalid Vault Format");
+        const appData = imported.payload || imported; // Handle legacy or new format
+        if (!appData.transactions || !appData.accounts || !appData.auth) {
+          throw new Error("Invalid AVIN format");
         }
-        persist(imported);
-        showToast('Vault Restored & Local Data Replaced');
+        persist(appData);
+        showToast('System Restored from Data File');
       } catch (err) {
-        showToast('Error: File is not a valid WealthTrack Vault');
+        showToast('Error: Invalid AVIN Data File');
       }
     };
     reader.readAsText(file);
@@ -200,12 +205,11 @@ const App: React.FC = () => {
       const pulled = await pullFromCloud(derivedId, pass);
       if (pulled) {
         setIsLoggedIn(true);
-        showToast('Cloud Session Authorized Everywhere');
+        showToast('AVIN Identity Verified');
       } else {
-        showToast('Vault not found. Please Sign Up or check credentials.');
+        showToast('Profile not found. Initialize new account.');
       }
     } else {
-      // Signup creates the entry and pushes it
       const newData = { 
         ...INITIAL_DATA, 
         auth: { userId: uid, password: pass }, 
@@ -238,41 +242,48 @@ const App: React.FC = () => {
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-slate-900 relative overflow-hidden">
-        <div className="absolute top-0 -left-10 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-[120px] opacity-20"></div>
-        <div className="absolute bottom-0 -right-10 w-96 h-96 bg-emerald-600 rounded-full mix-blend-multiply filter blur-[120px] opacity-10"></div>
+        <div className="absolute top-0 -left-10 w-[500px] h-[500px] bg-indigo-600 rounded-full mix-blend-multiply filter blur-[120px] opacity-10 animate-pulse"></div>
+        <div className="absolute bottom-0 -right-10 w-[500px] h-[500px] bg-emerald-600 rounded-full mix-blend-multiply filter blur-[120px] opacity-10 animate-pulse delay-700"></div>
         
         <div className="w-full max-w-md bg-white rounded-[3rem] shadow-2xl p-12 relative z-10 border border-white/20">
           <div className="flex flex-col items-center mb-10 text-center">
-            <div className="w-20 h-20 bg-indigo-600 text-white rounded-3xl flex items-center justify-center text-3xl mb-6 shadow-xl shadow-indigo-100">
-              <i className="fas fa-globe"></i>
+            <div className="w-24 h-24 bg-indigo-600 text-white rounded-[2rem] flex items-center justify-center text-4xl mb-6 shadow-2xl shadow-indigo-200">
+              <i className="fas fa-fingerprint"></i>
             </div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tighter">WealthTrack Global</h1>
-            <p className="text-slate-500 mt-2 font-medium text-sm">Synchronized Financial Command</p>
+            <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase">AVIN MAURYA</h1>
+            <p className="text-slate-400 mt-2 font-bold text-xs uppercase tracking-widest">Global Data Ledger</p>
           </div>
 
           <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-8">
-            <button onClick={() => setAuthMode('signin')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${authMode === 'signin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Sign In</button>
-            <button onClick={() => setAuthMode('signup')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${authMode === 'signup' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Sign Up</button>
+            <button onClick={() => setAuthMode('signin')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${authMode === 'signin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Authorize</button>
+            <button onClick={() => setAuthMode('signup')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${authMode === 'signup' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Initialize</button>
           </div>
 
           <form onSubmit={(e:any) => { e.preventDefault(); handleAuthorize(e.target.uid.value, e.target.pass.value); }} className="space-y-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Universal ID</label>
-              <input name="uid" type="text" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500 transition-all" placeholder="Enter ID" required />
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Identity ID</label>
+              <input name="uid" type="text" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500 transition-all" placeholder="Unique ID" required />
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Access Passphrase</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Secret Key</label>
               <input name="pass" type="password" className="w-full px-6 py-4 bg-slate-50 border-0 rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500 transition-all" placeholder="••••••••" required />
             </div>
             <button type="submit" disabled={isSyncing} className="w-full py-5 bg-indigo-600 text-white font-black rounded-2xl shadow-lg hover:bg-indigo-700 transition-all uppercase tracking-widest text-xs flex items-center justify-center gap-3">
-              {isSyncing ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-cloud-arrow-up"></i>}
-              {authMode === 'signin' ? 'Enter Cloud Vault' : 'Initialize Global Profile'}
+              {isSyncing ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-shield-halved"></i>}
+              {authMode === 'signin' ? 'Unlock Session' : 'Create Global Identity'}
             </button>
           </form>
 
+          <div className="mt-8 text-center">
+             <button onClick={() => fileInputRef.current?.click()} className="text-[10px] font-black text-indigo-400 uppercase tracking-widest hover:text-indigo-600 transition-colors">
+               <i className="fas fa-file-import mr-2"></i> Restore from Data File
+             </button>
+             <input ref={fileInputRef} type="file" accept=".avindata,.json" onChange={handleImportVault} className="hidden" />
+          </div>
+
           <div className="mt-10 pt-8 border-t border-slate-50 text-center">
              <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest leading-relaxed">
-               End-to-End Encrypted Architecture.<br/>Data is reconstructed only with your passphrase.
+               Military-Grade AES-256 Encryption.<br/>AVIN MAURYA protects your sovereignty.
              </p>
           </div>
         </div>
@@ -286,8 +297,8 @@ const App: React.FC = () => {
         <div className="flex flex-col h-full">
           <div className="p-8 flex items-center justify-between">
             <div className="flex items-center gap-3 text-indigo-600">
-              <i className="fas fa-microchip text-2xl"></i>
-              <span className="font-black text-xl tracking-tighter text-slate-900 uppercase">WT PRO</span>
+              <i className="fas fa-dna text-2xl"></i>
+              <span className="font-black text-xl tracking-tighter text-slate-900 uppercase">AVIN MAURYA</span>
             </div>
             <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-[8px] font-black uppercase ${isSyncing ? 'bg-amber-100 text-amber-600 animate-pulse' : 'bg-emerald-100 text-emerald-600'}`}>
               <div className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-amber-400' : 'bg-emerald-400'}`}></div>
@@ -318,7 +329,7 @@ const App: React.FC = () => {
             ))}
           </nav>
           <div className="p-6 border-t border-slate-50 space-y-2">
-             <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-4 px-6 py-3 text-slate-400 hover:text-indigo-600 text-xs font-bold uppercase tracking-widest transition-colors"><i className="fas fa-shuffle"></i> Sync & Export</button>
+             <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-4 px-6 py-3 text-slate-400 hover:text-indigo-600 text-xs font-bold uppercase tracking-widest transition-colors"><i className="fas fa-file-export"></i> Portability</button>
              <button onClick={() => window.location.reload()} className="w-full flex items-center gap-4 px-6 py-3 text-rose-400 hover:text-rose-600 text-xs font-bold uppercase tracking-widest transition-colors"><i className="fas fa-power-off"></i> Logout</button>
           </div>
         </div>
@@ -328,24 +339,24 @@ const App: React.FC = () => {
         {renderPage()}
       </main>
 
-      <Modal title="Global Sync & Portability" isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)}>
+      <Modal title="AVIN Master Portability" isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)}>
         <div className="space-y-8">
           <div className="p-8 bg-gradient-to-br from-indigo-600 to-indigo-700 rounded-[2.5rem] shadow-xl shadow-indigo-100 text-white relative overflow-hidden">
              <div className="absolute -top-10 -right-10 opacity-10">
-                <i className="fas fa-satellite-dish text-[12rem]"></i>
+                <i className="fas fa-file-zipper text-[12rem]"></i>
              </div>
              <div className="relative z-10">
-                <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-2">Authenticated Cloud Mapping</p>
+                <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-2">Authenticated Owner</p>
                 <h3 className="text-3xl font-black mb-6 uppercase tracking-tight">{data.auth.userId}</h3>
                 <div className="grid grid-cols-2 gap-4">
                    <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md">
-                      <p className="text-[8px] font-black uppercase opacity-60 mb-1">Last Handshake</p>
-                      <p className="text-xs font-black uppercase tracking-widest truncate">{data.sync.lastSynced ? new Date(data.sync.lastSynced).toLocaleString() : 'Never'}</p>
+                      <p className="text-[8px] font-black uppercase opacity-60 mb-1">Global ID</p>
+                      <p className="text-xs font-black uppercase tracking-widest truncate">{data.sync.syncId}</p>
                    </div>
-                   <div className={`bg-white/10 p-4 rounded-2xl backdrop-blur-md ${isSyncing ? 'animate-pulse' : ''}`}>
-                      <p className="text-[8px] font-black uppercase opacity-60 mb-1">Backend Connectivity</p>
+                   <div className={`bg-white/10 p-4 rounded-2xl backdrop-blur-md`}>
+                      <p className="text-[8px] font-black uppercase opacity-60 mb-1">System Health</p>
                       <p className="text-xs font-black uppercase tracking-widest flex items-center gap-2">
-                        <div className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-amber-400' : 'bg-emerald-400'}`}></div> {isSyncing ? 'Syncing...' : 'Connected'}
+                        <div className={`w-1.5 h-1.5 rounded-full bg-emerald-400`}></div> Active & Secure
                       </p>
                    </div>
                 </div>
@@ -355,8 +366,8 @@ const App: React.FC = () => {
           <div className="space-y-6">
              <div className="flex items-center justify-between px-2">
                 <div>
-                   <h4 className="font-black text-slate-800 uppercase text-xs tracking-widest">Real-Time Cloud Mirror</h4>
-                   <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Changes are broadcasted to the global backend</p>
+                   <h4 className="font-black text-slate-800 uppercase text-xs tracking-widest">Real-Time Cloud Link</h4>
+                   <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Automatic sync to AVIN Global nodes</p>
                 </div>
                 <div className={`w-12 h-6 rounded-full cursor-pointer relative transition-all ${data.sync.autoSync ? 'bg-indigo-600' : 'bg-slate-200'}`} onClick={() => persist({...data, sync: {...data.sync, autoSync: !data.sync.autoSync}})}>
                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${data.sync.autoSync ? 'left-7' : 'left-1'}`}></div>
@@ -365,28 +376,27 @@ const App: React.FC = () => {
              
              <div className="pt-8 border-t border-slate-100">
                 <h4 className="font-black text-slate-800 uppercase text-xs tracking-widest px-2 mb-6 flex items-center gap-2">
-                   <i className="fas fa-box-archive text-indigo-500"></i> Portability & Unique Data Files
+                   <i className="fas fa-file-shield text-indigo-500"></i> Master Data Engine
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                    <button onClick={handleExportVault} className="p-8 bg-slate-50 border border-slate-100 rounded-[2rem] text-center hover:bg-slate-100 transition-all group">
                       <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 text-indigo-600 shadow-sm group-hover:scale-110 transition-transform">
-                        <i className="fas fa-download"></i>
+                        <i className="fas fa-file-export"></i>
                       </div>
-                      <p className="text-[11px] font-black uppercase tracking-widest text-slate-900 mb-1">Generate Vault File</p>
-                      <p className="text-[9px] font-bold uppercase text-slate-400">Download your unique .wtvault</p>
+                      <p className="text-[11px] font-black uppercase tracking-widest text-slate-900 mb-1">Export .avindata</p>
+                      <p className="text-[9px] font-bold uppercase text-slate-400">Unique Portable Data File</p>
                    </button>
                    
                    <button onClick={() => fileInputRef.current?.click()} className="p-8 bg-slate-50 border border-slate-100 rounded-[2rem] text-center hover:bg-slate-100 transition-all group">
-                      <input ref={fileInputRef} type="file" accept=".wtvault,.json" onChange={handleImportVault} className="hidden" />
                       <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 text-emerald-600 shadow-sm group-hover:scale-110 transition-transform">
-                        <i className="fas fa-upload"></i>
+                        <i className="fas fa-file-import"></i>
                       </div>
-                      <p className="text-[11px] font-black uppercase tracking-widest text-slate-900 mb-1">Restore from Vault</p>
-                      <p className="text-[9px] font-bold uppercase text-slate-400">Upload an existing .wtvault file</p>
+                      <p className="text-[11px] font-black uppercase tracking-widest text-slate-900 mb-1">Import .avindata</p>
+                      <p className="text-[9px] font-bold uppercase text-slate-400">Restore Unique File</p>
                    </button>
                 </div>
                 <p className="mt-6 text-center text-[9px] font-black text-slate-300 uppercase tracking-widest px-8 leading-relaxed">
-                  Vault files are local copies of your entire financial ecosystem. Use them for cold storage backups.
+                  The .avindata file is your private digital asset. It contains your entire AVIN MAURYA ecosystem in a single, portable package.
                 </p>
              </div>
           </div>
