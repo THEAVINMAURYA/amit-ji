@@ -33,7 +33,6 @@ const AccountsPage: React.FC<AccountsPageProps> = ({ data, onSave, showToast }) 
     const index = newList.findIndex(a => a.id === editingAccount.id);
     
     if (index >= 0) {
-      // If editing existing, recalculate balance based on transactions
       const accTransactions = data.transactions.filter(t => t.account === editingAccount.id);
       const newBalance = (editingAccount.openingBalance || 0) + accTransactions.reduce((sum, t) => 
         t.type === TransactionType.INCOME ? sum + t.amount : sum - t.amount, 0
@@ -56,13 +55,16 @@ const AccountsPage: React.FC<AccountsPageProps> = ({ data, onSave, showToast }) 
     }
   };
 
-  // Logic to generate the account ledger with running balance
   const accountLedgerData = useMemo(() => {
     if (!viewingLedgerAcc) return [];
     
+    // Stable sort by date then by ID as a tie-breaker for running balance
     const accTransactions = data.transactions
       .filter(t => t.account === viewingLedgerAcc.id)
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
+        return a.id.localeCompare(b.id);
+      });
 
     let currentRunningBalance = viewingLedgerAcc.openingBalance || 0;
     
@@ -76,7 +78,7 @@ const AccountsPage: React.FC<AccountsPageProps> = ({ data, onSave, showToast }) 
         ...t,
         runningBalance: currentRunningBalance
       };
-    }).reverse(); // Latest transactions at top
+    }).reverse(); 
   }, [viewingLedgerAcc, data.transactions]);
 
   const exportAccountLedgerCSV = (acc: Account, ledger: any[]) => {
@@ -114,7 +116,7 @@ const AccountsPage: React.FC<AccountsPageProps> = ({ data, onSave, showToast }) 
               <div className="flex gap-2">
                 <button onClick={() => setViewingLedgerAcc(acc)} className="p-2 text-indigo-600 font-bold bg-indigo-50 rounded-xl text-[10px] uppercase tracking-widest hover:bg-indigo-100 transition-colors">Ledger</button>
                 <button onClick={() => { setEditingAccount(acc); setIsModalOpen(true); }} className="p-2 text-slate-300 hover:text-indigo-600"><i className="fas fa-edit"></i></button>
-                <button onClick={() => deleteAccount(acc.id)} className="p-2 text-slate-300 hover:text-rose-500"><i className="fas fa-trash-alt"></i></button>
+                <button onClick={() => deleteAccount(acc.id)} className="p-2 text-slate-300 hover:text-rose-500"><i className="fas fa-trash"></i></button>
               </div>
             </div>
             <h3 className="text-xl font-black text-slate-900 mb-1">{acc.name}</h3>
@@ -139,7 +141,6 @@ const AccountsPage: React.FC<AccountsPageProps> = ({ data, onSave, showToast }) 
         ))}
       </div>
 
-      {/* ACCOUNT LEDGER MODAL */}
       <Modal 
         title={`Account Ledger: ${viewingLedgerAcc?.name}`} 
         isOpen={!!viewingLedgerAcc} 
@@ -213,7 +214,6 @@ const AccountsPage: React.FC<AccountsPageProps> = ({ data, onSave, showToast }) 
         </div>
       </Modal>
 
-      {/* CONFIGURE ACCOUNT MODAL */}
       <Modal title="Configure Account" isOpen={isModalOpen} onClose={() => setIsModalOpen(false)}>
         <div className="space-y-6">
            <div className="space-y-1">
