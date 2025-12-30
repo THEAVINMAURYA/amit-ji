@@ -83,6 +83,11 @@ export interface JournalEntry {
 
 export interface AppData {
   auth: { userId: string; password: string };
+  sync: {
+    syncId: string;
+    autoSync: boolean;
+    lastSynced: string;
+  };
   transactions: Transaction[];
   accounts: Account[];
   credentials: Credential[];
