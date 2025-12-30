@@ -52,14 +52,16 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
   };
 
   const handleTrade = () => {
-    if (!tradingAsset || !tradeData.qty || !tradeData.price || !selectedAccount) return;
+    // FIX: Added !tradeData.type check to satisfy TS compiler
+    if (!tradingAsset || !tradeData.qty || !tradeData.price || !selectedAccount || !tradeData.type) return;
     
     const qty = tradeData.qty;
     const price = tradeData.price;
     const charges = tradeData.charges || 0;
+    const tradeType = tradeData.type; // Extract to constant for stable typing
     const asset = { ...tradingAsset };
     
-    if (tradeData.type === 'buy') {
+    if (tradeType === 'buy') {
       const totalCost = (asset.avgBuyPrice * asset.qty) + (qty * price) + charges;
       asset.qty += qty;
       asset.avgBuyPrice = totalCost / asset.qty;
@@ -82,19 +84,19 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
     asset.history.push({
       id: Date.now().toString(),
       date: tradeData.date || new Date().toISOString().split('T')[0],
-      type: tradeData.type as 'buy' | 'sell',
+      type: tradeType as 'buy' | 'sell',
       qty,
       price,
       charges
     });
 
-    const transactionValue = tradeData.type === 'buy' ? (qty * price + charges) : (qty * price - charges);
+    const transactionValue = tradeType === 'buy' ? (qty * price + charges) : (qty * price - charges);
 
     const newTrans: Transaction = {
       id: Date.now().toString() + '-trade',
-      type: tradeData.type === 'buy' ? TransactionType.EXPENSE : TransactionType.INCOME,
+      type: tradeType === 'buy' ? TransactionType.EXPENSE : TransactionType.INCOME,
       date: tradeData.date || new Date().toISOString().split('T')[0],
-      description: `${tradeData.type.toUpperCase()}: ${asset.name} (${qty} units)`,
+      description: `${tradeType.toUpperCase()}: ${asset.name} (${qty} units)`,
       category: 'Investment',
       account: selectedAccount,
       amount: transactionValue,
@@ -117,7 +119,7 @@ const PortfolioPage: React.FC<PortfolioPageProps> = ({ data, onSave, showToast }
     });
 
     setIsTradeOpen(false);
-    showToast(`${tradeData.type === 'buy' ? 'Buy Executed' : 'Sell Executed'}`);
+    showToast(`${tradeType === 'buy' ? 'Buy Executed' : 'Sell Executed'}`);
   };
 
   const portfolioSummary = useMemo(() => {
